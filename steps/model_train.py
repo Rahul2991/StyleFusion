@@ -1,4 +1,5 @@
 from .config import ModelConfig
+from utils import weights_init
 from zenml.client import Client
 from zenml import step
 import mlflow, logging
@@ -35,8 +36,8 @@ def train_model(
             total_rec_train_loss = 0.0
             total_kl_train_loss = 0.0
             # total_disc_train_loss = 0.0
-            # total_perp_train_loss = 0.0
-            # total_edge_train_loss = 0.0
+            total_perp_train_loss = 0.0
+            total_edge_train_loss = 0.0
             # total_content_train_loss = 0.0
             # total_style_train_loss = 0.0
             
@@ -46,8 +47,8 @@ def train_model(
             total_rec_val_loss = 0.0
             total_kl_val_loss = 0.0
             # total_disc_val_loss = 0.0
-            # total_perp_val_loss = 0.0
-            # total_edge_val_loss = 0.0
+            total_perp_val_loss = 0.0
+            total_edge_val_loss = 0.0
             # total_content_val_loss = 0.0
             # total_style_val_loss = 0.0
             
@@ -56,6 +57,8 @@ def train_model(
                 num_genres=n_genres,
                 img_size=config.IMG_SIZE
             ).to(config.DEVICE)
+            
+            if not config.LOAD_MODEL: style_vae_model.apply(weights_init)
             
             # resnet_disc = ResNetDiscriminator(
             #     z_dim=config.Z_DIM,
@@ -78,8 +81,8 @@ def train_model(
             
             loss_fn = VAE_Loss()
             # adv_loss_fn = Adversarial_Loss()
-            # edge_acc_loss_fn = EdgeAccuracyLoss().to(config.DEVICE)
-            # perp_loss_fn = PerceptualLoss().to(config.DEVICE)
+            edge_acc_loss_fn = EdgeAccuracyLoss().to(config.DEVICE)
+            perp_loss_fn = PerceptualLoss().to(config.DEVICE)
             # style_loss_fn = StyleLoss().to(config.DEVICE)
             # content_loss_fn = ContentLoss().to(config.DEVICE)
             
@@ -113,15 +116,17 @@ def train_model(
                     rec_train_loss, kl_train_loss = loss_fn(reconstructed_x, images, mu, sigma, ret_components=True)
                     kl_train_loss = config.BVAE * (kl_train_loss / config.BATCH_SIZE)
                     # adv_train_loss = adv_loss_fn(resnet_disc, style_z.detach(), genres)
-                    # edge_train_loss = edge_acc_loss_fn(reconstructed_x, images)
-                    # perp_train_loss = perp_loss_fn(reconstructed_x, images)
+                    edge_train_loss = edge_acc_loss_fn(reconstructed_x, images)
+                    perp_train_loss = perp_loss_fn(reconstructed_x, images)
                     # style_train_loss = style_loss_fn(reconstructed_x, images)
                     # content_train_loss = content_loss_fn(reconstructed_x, images)
                     
                     train_loss = config.LAMBDA_REC_LOSS * rec_train_loss + \
-                                 config.LAMBDA_KL_LOSS * kl_train_loss 
+                                 config.LAMBDA_KL_LOSS * kl_train_loss + \
+                                 config.LAMBDA_PERP_LOSS * perp_train_loss + \
+                                 config.LAMBDA_EDGE_LOSS * edge_train_loss
                                 #  config.LAMBDA_DISC_LOSS * adv_train_loss + \
-                                #  edge_train_loss + perp_train_loss + style_train_loss + content_train_loss
+                                #  style_train_loss + content_train_loss
                                         
                     vae_optimizer.zero_grad()
                     train_loss.backward()
@@ -136,8 +141,8 @@ def train_model(
                     total_train_loss += train_loss.item()
                     total_rec_train_loss +=(config.LAMBDA_REC_LOSS * rec_train_loss.item())
                     total_kl_train_loss +=(config.LAMBDA_KL_LOSS *  kl_train_loss.item())
-                    # total_edge_train_loss +=(edge_train_loss.item())
-                    # total_perp_train_loss +=(perp_train_loss.item())
+                    total_edge_train_loss +=(config.LAMBDA_EDGE_LOSS * edge_train_loss.item())
+                    total_perp_train_loss +=(config.LAMBDA_PERP_LOSS * perp_train_loss.item())
                     # total_style_train_loss +=(style_train_loss.item())
                     # total_content_train_loss +=(content_train_loss.item())
                     # total_disc_train_loss +=(config.LAMBDA_DISC_LOSS * disc_train_loss.item())
@@ -147,8 +152,8 @@ def train_model(
                         train_l=f"{train_loss.item():.4f}", 
                         rec_l=f"{config.LAMBDA_REC_LOSS * rec_train_loss.item():.4f}", 
                         kl_l=f"{config.LAMBDA_KL_LOSS * kl_train_loss.item():.4f}", 
-                        # edge_l=f"{edge_train_loss.item():.4f}", 
-                        # perp_l=f"{perp_train_loss.item():.4f}",
+                        edge_l=f"{config.LAMBDA_EDGE_LOSS * edge_train_loss.item():.4f}", 
+                        perp_l=f"{config.LAMBDA_PERP_LOSS * perp_train_loss.item():.4f}",
                         # style_l=f"{style_train_loss.item():.4f}",
                         # content_l=f"{content_train_loss.item():.4f}",
                         # disc_l=f"{config.LAMBDA_DISC_LOSS * disc_train_loss.item():.4f}", 
@@ -159,8 +164,8 @@ def train_model(
                 avg_train_loss = total_train_loss / num_batches
                 avg_rec_train_loss = total_rec_train_loss / num_batches
                 avg_kld_train_loss = total_kl_train_loss / num_batches
-                # avg_edge_train_loss = total_edge_train_loss / num_batches
-                # avg_perp_train_loss = total_perp_train_loss / num_batches
+                avg_edge_train_loss = total_edge_train_loss / num_batches
+                avg_perp_train_loss = total_perp_train_loss / num_batches
                 # avg_style_train_loss = total_style_train_loss / num_batches
                 # avg_content_train_loss = total_content_train_loss / num_batches
                 # avg_disc_train_loss = total_disc_train_loss / num_batches
@@ -169,8 +174,8 @@ def train_model(
                 total_rec_train_loss = 0.0
                 total_kl_train_loss = 0.0
                 # total_disc_train_loss = 0.0
-                # total_edge_train_loss = 0.0
-                # total_perp_train_loss = 0.0
+                total_edge_train_loss = 0.0
+                total_perp_train_loss = 0.0
                 # total_style_train_loss = 0.0
                 # total_content_train_loss = 0.0
                 num_batches = 0
@@ -178,8 +183,8 @@ def train_model(
                 mlflow.log_metric("style_vae_train_loss", avg_train_loss, step=epoch)
                 mlflow.log_metric("rec_train_loss", avg_rec_train_loss, step=epoch)
                 mlflow.log_metric("kl_div_train_loss", avg_kld_train_loss, step=epoch)
-                # mlflow.log_metric("edge_train_loss", avg_edge_train_loss, step=epoch)
-                # mlflow.log_metric("perp_train_loss", avg_perp_train_loss, step=epoch)
+                mlflow.log_metric("edge_train_loss", avg_edge_train_loss, step=epoch)
+                mlflow.log_metric("perp_train_loss", avg_perp_train_loss, step=epoch)
                 # mlflow.log_metric("style_train_loss", avg_style_train_loss, step=epoch)
                 # mlflow.log_metric("content_train_loss", avg_content_train_loss, step=epoch)
                 # mlflow.log_metric("disc_train_loss", avg_disc_train_loss, step=epoch)
@@ -196,15 +201,17 @@ def train_model(
                         rec_val_loss, kl_val_loss = loss_fn(reconstructed_x, images, mu, sigma, ret_components=True)
                         kl_val_loss = config.BVAE * (kl_val_loss / config.BATCH_SIZE)
                         # adv_val_loss = adv_loss_fn(resnet_disc, style_z.detach(), genres)
-                        # edge_val_loss = edge_acc_loss_fn(reconstructed_x, images)
-                        # perp_val_loss = perp_loss_fn(reconstructed_x, images)
+                        edge_val_loss = edge_acc_loss_fn(reconstructed_x, images)
+                        perp_val_loss = perp_loss_fn(reconstructed_x, images)
                         # style_val_loss = style_loss_fn(reconstructed_x, images)
                         # content_val_loss = content_loss_fn(reconstructed_x, images)
                         
                         val_loss = config.LAMBDA_REC_LOSS * rec_val_loss + \
-                                    config.LAMBDA_KL_LOSS * kl_val_loss 
+                                    config.LAMBDA_KL_LOSS * kl_val_loss + \
+                                    config.LAMBDA_PERP_LOSS * perp_val_loss + \
+                                    config.LAMBDA_EDGE_LOSS * edge_val_loss
                                     # config.LAMBDA_DISC_LOSS * adv_val_loss + \
-                                    # edge_val_loss + perp_val_loss + style_val_loss + content_val_loss
+                                    # style_val_loss + content_val_loss
                         
                         # genre_predictions = resnet_disc(style_z.detach())
                         # disc_val_loss = F.binary_cross_entropy_with_logits(genre_predictions, genres)
@@ -212,8 +219,8 @@ def train_model(
                         total_val_loss += val_loss.item()
                         total_rec_val_loss +=(config.LAMBDA_REC_LOSS * rec_val_loss.item())
                         total_kl_val_loss +=(config.LAMBDA_KL_LOSS *  kl_val_loss.item())
-                        # total_edge_val_loss +=(edge_val_loss.item())
-                        # total_perp_val_loss +=(perp_val_loss.item())
+                        total_edge_val_loss +=(config.LAMBDA_EDGE_LOSS * edge_val_loss.item())
+                        total_perp_val_loss +=(config.LAMBDA_PERP_LOSS * perp_val_loss.item())
                         # total_style_val_loss +=(style_val_loss.item())
                         # total_content_val_loss +=(content_val_loss.item())
                         # total_disc_val_loss +=(config.LAMBDA_DISC_LOSS * disc_val_loss.item())
@@ -223,8 +230,8 @@ def train_model(
                             val_l=f"{val_loss.item():.4f}", 
                             rec_l=f"{config.LAMBDA_REC_LOSS * rec_val_loss.item():.4f}", 
                             kl_l=f"{config.LAMBDA_KL_LOSS * kl_val_loss.item():.4f}", 
-                            # edge_l=f"{edge_val_loss.item():.4f}", 
-                            # perp_l=f"{perp_val_loss.item():.4f}", 
+                            edge_l=f"{config.LAMBDA_EDGE_LOSS * edge_val_loss.item():.4f}", 
+                            perp_l=f"{config.LAMBDA_PERP_LOSS * perp_val_loss.item():.4f}", 
                             # style_l=f"{style_val_loss.item():.4f}",
                             # content_l=f"{content_val_loss.item():.4f}",
                             # disc_l=f"{config.LAMBDA_DISC_LOSS * disc_val_loss.item():.4f}", 
@@ -235,8 +242,8 @@ def train_model(
                 avg_val_loss = total_val_loss / num_batches
                 avg_rec_val_loss = total_rec_val_loss / num_batches
                 avg_kld_val_loss = total_kl_val_loss / num_batches
-                # avg_edge_val_loss = total_edge_val_loss / num_batches
-                # avg_perp_val_loss = total_perp_val_loss / num_batches
+                avg_edge_val_loss = total_edge_val_loss / num_batches
+                avg_perp_val_loss = total_perp_val_loss / num_batches
                 # avg_style_val_loss = total_style_val_loss / num_batches
                 # avg_content_val_loss = total_content_val_loss / num_batches
                 # avg_disc_val_loss = total_disc_val_loss / num_batches
@@ -244,8 +251,8 @@ def train_model(
                 total_val_loss = 0.0
                 total_rec_val_loss = 0.0
                 total_kl_val_loss = 0.0
-                # total_edge_val_loss = 0.0
-                # total_perp_val_loss = 0.0
+                total_edge_val_loss = 0.0
+                total_perp_val_loss = 0.0
                 # total_disc_val_loss = 0.0
                 # total_style_val_loss = 0.0
                 # total_content_val_loss = 0.0
@@ -254,8 +261,8 @@ def train_model(
                 mlflow.log_metric("style_vae_val_loss", avg_val_loss, step=epoch)
                 mlflow.log_metric("rec_val_loss", avg_rec_val_loss, step=epoch)
                 mlflow.log_metric("kl_div_val_loss", avg_kld_val_loss, step=epoch)
-                # mlflow.log_metric("edge_val_loss", avg_edge_val_loss, step=epoch)
-                # mlflow.log_metric("perp_val_loss", avg_perp_val_loss, step=epoch)
+                mlflow.log_metric("edge_val_loss", avg_edge_val_loss, step=epoch)
+                mlflow.log_metric("perp_val_loss", avg_perp_val_loss, step=epoch)
                 # mlflow.log_metric("style_val_loss", avg_style_val_loss, step=epoch)
                 # mlflow.log_metric("content_val_loss", avg_content_val_loss, step=epoch)
                 # mlflow.log_metric("disc_val_loss", avg_disc_val_loss, step=epoch)

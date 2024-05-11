@@ -1,23 +1,28 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 class StyleTransferVAE(nn.Module):
     def __init__(self, num_genres=10, z_dim=20, img_size=256):
         super().__init__()
+        
+        self.img_size = img_size
 
         # Encoder
-        self.content_encoder_conv = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Flatten(),
-        )
-        self.fc_mu = nn.Linear(256 * img_size//8 * img_size//8, z_dim)  # Fully connected layer for mu
-        self.fc_sigma = nn.Linear(256 * img_size//8 * img_size//8, z_dim)  # Fully connected layer for sigma
+        self.enc_conv1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=4, stride=2, padding=1), nn.ReLU())
+        self.enc_conv2 = nn.Sequential(nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1), nn.ReLU())
+        self.enc_conv3 = nn.Sequential(nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1), nn.ReLU(), nn.Flatten())
+        
+        # Fully connected layers for VAE z parameters
+        self.fc_mu = nn.Linear(256 * self.img_size // 8 * self.img_size // 8, z_dim)
+        self.fc_sigma = nn.Linear(256 * self.img_size // 8 * self.img_size // 8, z_dim)
 
+        # Decoder
+        self.dec_fc = nn.Linear(2 * z_dim, 256 * self.img_size // 8 * self.img_size // 8)
+        self.dec_conv1 = nn.Sequential(nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1), nn.ReLU())
+        self.dec_conv2 = nn.Sequential(nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1), nn.ReLU())
+        self.dec_conv3 = nn.Sequential(nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1), nn.Sigmoid())
+        
         # Style Encoder for multiple genres
         self.style_encoder = nn.Sequential(
             nn.Linear(num_genres, 128),
@@ -25,44 +30,34 @@ class StyleTransferVAE(nn.Module):
             nn.Linear(128, z_dim),
             nn.Sigmoid()
         )
-
-        # Decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(2 * z_dim, 256 * img_size//8 * img_size//8),
-            nn.ReLU(),
-            nn.Unflatten(1, (256, img_size//8, img_size//8)),  # Reshape for convolutional layers
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 3, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid()  # Ensuring output is between 0 and 1
-        )
-
-    def encode_content(self, x):
-        x = self.content_encoder_conv(x)
-        mu = self.fc_mu(x)
-        sigma = self.fc_sigma(x)
-        return mu, sigma
-
+        
     def encode_style(self, genres):
         return self.style_encoder(genres)
 
-    def decode(self, z):
-        return self.decoder(z)
-        
+    def encode_content(self, x):
+        x1 = self.enc_conv1(x)
+        x2 = self.enc_conv2(x1)
+        x3 = self.enc_conv3(x2)
+        mu = self.fc_mu(x3)
+        sigma = self.fc_sigma(x3)
+        return mu, sigma, x1, x2, x3
+
+    def decode(self, z, x1, x2):
+        x = self.dec_fc(z)
+        x = x.view(-1, 256, self.img_size // 8, self.img_size // 8)  # Reshape for convolution
+        x = self.dec_conv1(x)
+        x = self.dec_conv2(x + x2) # Skip connection
+        x = self.dec_conv3(x + x1) # Skip connection
+        return x
+
     def forward(self, x, genres):
-        mu, sigma = self.encode_content(x)
+        mu, sigma, x1, x2, x3 = self.encode_content(x)
         style_z = self.encode_style(genres)
         epsilon = torch.randn_like(sigma)
-        content_z = mu + epsilon * torch.exp(sigma / 2)  # Reparametrization trick
-
-        # Combine style and content in the latent space
+        content_z = mu + epsilon * torch.exp(sigma / 2)
         combined_z = torch.cat([content_z, style_z], dim=1)
-        
-        reconstructed_x = self.decode(combined_z)
+        reconstructed_x = self.decode(combined_z, x1, x2)
         return reconstructed_x, mu, sigma, style_z
-
     
 if __name__ == '__main__':
     img_size = 256

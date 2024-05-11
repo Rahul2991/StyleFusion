@@ -13,13 +13,15 @@ class ModelConfig(BaseParameters):
     H_DIM: int  = 200
     Z_DIM: int = 256
     NUM_EPOCHS: int  = 100
-    BATCH_SIZE: int  = 128
-    STYLE_VAE_LR_RATE: float  = 1e-2
+    BATCH_SIZE: int  = 32
+    STYLE_VAE_LR_RATE: float  = 1e-4
     RESNET_DISC_LR_RATE: float  = 3e-10
-    FID_CALC_FREQ: int  = 100
-    LAMBDA_REC_LOSS: float = 1.0
-    LAMBDA_KL_LOSS: float = 1.0
-    LAMBDA_DISC_LOSS: float = 0.1
-    BVAE: float = 1.0
+    FID_CALC_FREQ: int  = 1
+    LAMBDA_REC_LOSS: float = 1
+    LAMBDA_KL_LOSS: float = 1
+    LAMBDA_PERP_LOSS: float = 1.0
+    LAMBDA_EDGE_LOSS: float = 1.0
+    # LAMBDA_DISC_LOSS: float = 0.1
+    BVAE: float = 1
 
     LOAD_MODEL: bool = True
